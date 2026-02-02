@@ -1,10 +1,19 @@
-from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit
 import math
-import random
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
-import time
+
+
+from config import *
+
+
+def norm_value(value, size=4000):
+    value = value % size
+    if value > size / 2:
+        value -= size
+    elif value < -size / 2:
+        value += size
+    return value
+
+
 
 @dataclass
 class Vector2D:
@@ -19,6 +28,9 @@ class Vector2D:
 
     def __mul__(self, scalar):
         return Vector2D(self.x * scalar, self.y * scalar)
+
+    def norm(self):
+        return Vector2D(norm_value(self.x), norm_value(self.y))
 
     def length(self):
         return math.sqrt(self.x ** 2 + self.y ** 2)
@@ -40,23 +52,43 @@ class Vector2D:
 
 
 class GameObject:
-    def __init__(self, id: str, position: Vector2D, team: str):
-        self.id = id
+    def __init__(self, position: Vector2D, radius: float):
         self.position = position
-        self.team = team  # "red" или "blue"
-        self.radius = 10
-        self.alive = True
+        self.radius = radius
+
+    def norm_position(self):
+        width = Config.width
+        height = Config.height
+        if self.position.x < 0:
+            self.position.x += width
+        elif self.position.x > width:
+            self.position.x -= width
+        if self.position.y < 0:
+            self.position.y += height
+        elif self.position.y > height:
+            self.position.y -= height
 
     def collides_with(self, other: 'GameObject') -> bool:
-        distance = (self.position - other.position).length()
+        distance = Vector2D(
+            norm_value(self.position.x - other.position.x),
+            norm_value(self.position.y - other.position.y)
+        ).length()
         return distance < (self.radius + other.radius)
+
+    def get_distance_to_obj(self, obj):
+        x1 = self.position.x - obj.position.x
+        y1 = self.position.y - obj.position.y
+        x = norm_value(self.position.x - obj.position.x)
+        y = norm_value(self.position.y - obj.position.y)
+        distance = Vector2D(x, y).length()
+        if distance > math.sqrt(2) * 2000:
+            print('distance:', distance, self.position, obj.position)
+            print(x1, y1, '\n', x, y)
+        return distance - self.radius - obj.radius
 
     def to_dict(self):
         return {
-            'id': self.id,
             'x': self.position.x,
             'y': self.position.y,
-            'team': self.team,
-            'radius': self.radius,
-            'alive': self.alive
+            'radius': self.radius
         }

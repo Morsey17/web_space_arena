@@ -1,3 +1,25 @@
+# scp flask-game.tar root@92.118.114.86:/tmp/
+# w5LLhwVCQAb7S-
+
+# s2
+
+"""
+
+sudo docker run -d \
+  --name flask-game \
+  -p 8080:5000 \
+  --restart always \
+  flask-game
+
+
+        подключение к серверу:
+ssh root@92.118.114.86
+cd \tmp
+
+"""
+
+
+
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 import math
@@ -7,6 +29,27 @@ from typing import List, Optional, Tuple
 import time
 
 app = Flask(__name__)
+
+
+class Player:
+    def __init__(self, sid, team):
+        self.sid = sid
+        self.ship = None
+        self.team = team
+        self.cooldown = 100
+        self.max_cooldown = 100
+
+    def destroy(self, list):
+        try:
+            self.ship.alive = False
+            if list is not None and self in list:
+                list.remove(self)
+        except Exception as e:
+            print(f"Ошибка при удалении объекта: {e}")
+
+
+players = []
+
 
 # Используем threading mode для совместимости с Python 3.13
 socketio = SocketIO(app,
@@ -19,9 +62,6 @@ socketio = SocketIO(app,
 # ========== КЛАССЫ ИГРЫ ==========
 
 
-
-
-
 #from objects.game_object import *
 from objects.titan import *
 from objects.ship import *
@@ -29,6 +69,9 @@ from objects.drone import *
 from objects.tower import *
 from objects.bullet import *
 from objects.missile import *
+from objects.explosion import *
+from objects.gold import *
+from objects.met import *
 
 
 
@@ -36,55 +79,82 @@ from objects.missile import *
 
 class Game:
     def __init__(self):
-        self.width = 1000
-        self.height = 600
+        self.ship = [[], []]
+        self.bullet = [[], []]
+        self.missile = [[], []]
+        self.missile = [[], []]
+        self.drone = [[], []]
+        self.titan = [[], []]
+        self.tower = [[], []]
+        self.explosion = []
+        self.gold = []
+        self.met = []
+        self.width = 4000
+        self.height = 4000
         self.objects = {}
         self.last_id = 0
-        self.players = {}
         self.running = True
+        self.restart = False
 
         # Создаем титанов
         self.create_titans()
 
+        # Создаём метеориты
+        self.create_mets()
+
         # Создаем башни
         self.create_towers()
 
-    def generate_id(self) -> str:
-        self.last_id += 1
-        return f"obj_{self.last_id}"
+    def create_mets(self):
+        x = 3000
+        y = 1000
+        self.met.append(Met(Vector2D(x - 900, y - 300), 100))
+        self.met.append(Met(Vector2D(x + 400, y - 700), 120))
+        self.met.append(Met(Vector2D(x + 40, y + 300), 110))
+        x = 1000
+        y = 3000
+        self.met.append(Met(Vector2D(x - 900, y - 300), 100))
+        self.met.append(Met(Vector2D(x + 400, y - 700), 120))
+        self.met.append(Met(Vector2D(x + 40, y + 300), 110))
 
     def create_titans(self):
-        red_titan = Titan(self.generate_id(), Vector2D(200, 300), "red")
-        blue_titan = Titan(self.generate_id(), Vector2D(800, 300), "blue")
-
-        self.objects[red_titan.id] = red_titan
-        self.objects[blue_titan.id] = blue_titan
+        self.titan[0].append(Titan(Vector2D(1000, 1000), 0))
+        self.titan[1].append(Titan(Vector2D(3000, 3000), 1))
 
     def create_towers(self):
-        # Находим титанов
-        titans = [obj for obj in self.objects.values() if isinstance(obj, Titan)]
-
-        for titan in titans:
-            for i in range(3):  # 3 башни на каждого титана
-                tower = Tower(
-                    self.generate_id(),
+        for team_i in range(2):
+            for i in range(3):
+                orbit_angle = i * 120  # Равномерно распределяем
+                self.tower[team_i].append(Tower(
                     Vector2D(0, 0),
-                    titan.team,
-                    titan.id
-                )
-                tower.orbit_angle = i * 120  # Равномерно распределяем
-                self.objects[tower.id] = tower
+                    self.titan[team_i][0],
+                    orbit_angle
+                ))
 
-    def add_ship(self, player_id: str, team: str) -> str:
-        # Находим титана команды
-        titan = next((obj for obj in self.objects.values()
-                      if isinstance(obj, Titan) and obj.team == team), None)
+    def spawn_bullet(self, parent):
+        self.bullet[parent.team].append(Bullet(parent))
 
-        if not titan:
-            return None
+    def spawn_missile(self, parent, target=None):
+        if target != None:
+            self.missile[parent.team].append(Missile(parent, target))
 
+    def add_ship(self, team: int, sid: int):
+        self.ship[team].append(Ship(
+            team,
+            sid,
+            self.titan[team][0],
+            "simple"
+        ))
+
+    def spawn_drone(self, titan: Titan):
+        if len(self.drone[titan.team]) < 20:
+            self.drone[titan.team].append(Drone(titan))
+
+    """
+
+    def add_ship(self, player_id: str, team_i: int):
         # Создаем корабль
-        spawn_pos = titan.position + Vector2D(0, -150)
+        spawn_pos = Game.titan.position + Vector2D(0, -150)
         ship = Ship(
             self.generate_id(),
             spawn_pos,
@@ -95,8 +165,6 @@ class Game:
         self.objects[ship.id] = ship
         self.players[player_id] = ship.id
 
-        return ship.id
-
     def spawn_drone(self, titan: Titan):
         offset = Vector2D(random.uniform(-50, 50), random.uniform(-50, 50))
         drone = Drone(
@@ -106,187 +174,104 @@ class Game:
             titan.id
         )
         self.objects[drone.id] = drone
+    """
 
     def update(self):
+
         if not self.running:
             return
 
-        # Обновляем все объекты
-        ships = []
-        enemies = []
-        bullets = []
-        missiles = []
-        drones = []
-        titans = []
-        towers = []
+        for player in players:
+            player.cooldown -= 1
+            if (player.ship == None):
+                if (player.cooldown <= 0):
+                    game.add_ship(player.team, player.sid)
+                    player.ship = game.ship[player.team][-1]
+            elif (player.ship.health <= 0):
+                player.cooldown = player.max_cooldown
+                player.ship = None
 
-        # Собираем объекты по типам
-        for obj in list(self.objects.values()):
-            if isinstance(obj, Ship):
-                ships.append(obj)
-                obj.update()
-            elif isinstance(obj, Drone):
-                drones.append(obj)
-                enemies.append(obj)  # Дроны всегда враги для противоположной команды
-            elif isinstance(obj, Bullet):
-                bullets.append(obj)
-                obj.update()
-            elif isinstance(obj, Missile):
-                missiles.append(obj)
-                obj.update()
-            elif isinstance(obj, Tower):
-                towers.append(obj)
-            elif isinstance(obj, Titan):
-                titans.append(obj)
+        for team_i in range(2):
+            enemy_i = 1 if team_i == 0 else 0
+            enemies = (self.titan[enemy_i] + self.tower[enemy_i] +
+                       self.ship[enemy_i] + self.drone[enemy_i])
+            for obj in self.titan[team_i]:
+                if obj.update():
+                    self.spawn_drone(obj)
+            for obj in self.tower[team_i]:
+                self.spawn_missile(obj, obj.update(enemies))
+            for obj in self.drone[team_i]:
+                if obj.update(enemies):
+                    self.spawn_bullet(obj)
+            for obj in self.ship[team_i]:
+                if obj.update(self):
+                    self.spawn_bullet(obj)
+            for obj in self.bullet[team_i]:
+                obj.update(enemies, game)
+            for obj in self.missile[team_i]:
+                obj.update(enemies)
+            # Удаление из памяти мёртвых
+            for obj in self.bullet[team_i]:
+                if obj.alive == False:
+                    #position: Vector2D, radius: float, team: int, lifetime=10):
+                    self.explosion.append(Explosion(obj.position, obj.radius, obj.team, 10))
+                    obj.destroy(self.bullet[team_i])
+            for obj in self.missile[team_i]:
+                if obj.alive == False:
+                    self.explosion.append(Explosion(obj.position, obj.radius, obj.team, 10))
+                    obj.destroy(self.missile[team_i])
+            for obj in self.drone[team_i]:
+                if obj.alive == False:
+                    self.explosion.append(Explosion(obj.position, obj.radius * 1.5, obj.team, 30))
+                    self.gold.append(Gold(obj.position, 5))
+                    obj.destroy(self.drone[team_i])
+            for obj in self.ship[team_i]:
+                if obj.alive == False:
+                    self.explosion.append(Explosion(obj.position, obj.radius, obj.team, 50))
+                    self.gold.append(Gold(obj.position, 10 + obj.gold / 5))
+                    obj.destroy(self.ship[team_i])
+            for obj in self.tower[team_i]:
+                if obj.alive == False:
+                    self.explosion.append(Explosion(obj.position, obj.radius, obj.team, 70))
+                    self.gold.append(Gold(obj.position, 100))
+                    obj.destroy(self.tower[team_i])
 
-        # Обновляем дронов и башни
-        for drone in drones:
-            # Собираем врагов для дрона
-            drone_enemies = []
-            for obj in self.objects.values():
-                if obj.team != drone.team and obj.alive:
-                    drone_enemies.append(obj)
-            drone.update(drone_enemies)
+        for obj in self.met:
+            obj.update()
+        for obj in self.explosion:
+            obj.update()
+            if obj.alive == False:
+                obj.destroy(self.explosion)
+        for obj in self.gold:
+            obj.update(game)
+            if obj.alive == False:
+                obj.destroy(self.gold)
 
-        for tower in towers:
-            # Находим титана башни
-            titan = self.objects.get(tower.titan_id)
-            if not titan:
-                continue
 
-            # Собираем враги
-            tower_enemies = []
-            for obj in self.objects.values():
-                if obj.team != tower.team and obj.alive:
-                    tower_enemies.append(obj)
+        # Обновление координат для закцикливания карты
+        for team_i in range(2):
+            objs = self.titan[team_i] + self.tower[team_i] + self.ship[team_i] + self.drone[team_i] \
+                + self.bullet[team_i] + self.missile[team_i]
+            for obj in objs:
+                obj.norm_position()
 
-            target = tower.update(titan, tower_enemies)
-            if target:
-                # Создаем ракету
-                missile = Missile(
-                    self.generate_id(),
-                    tower.position,
-                    tower.team,
-                    target
-                )
-                self.objects[missile.id] = missile
-
-        # Спавним дронов у титанов
-        for titan in titans:
-            titan.drone_spawn_timer += 1
-            if titan.drone_spawn_timer >= 180:  # 3 секунды
-                titan.drone_spawn_timer = 0
-                self.spawn_drone(titan)
-
-        # Проверка столкновений
-        self.check_collisions()
-
-        # Удаляем мертвые объекты
-        dead_ids = [obj_id for obj_id, obj in self.objects.items() if not obj.alive]
-        for obj_id in dead_ids:
-            del self.objects[obj_id]
-
-            # Если это корабль игрока
-            for player_id, ship_id in list(self.players.items()):
-                if ship_id == obj_id:
-                    del self.players[player_id]
-
-    def check_collisions(self):
-        objects_list = list(self.objects.values())
-
-        for i in range(len(objects_list)):
-            obj1 = objects_list[i]
-            if not obj1.alive:
-                continue
-
-            for j in range(i + 1, len(objects_list)):
-                obj2 = objects_list[j]
-                if not obj2.alive:
-                    continue
-
-                if obj1.collides_with(obj2):
-                    self.handle_collision(obj1, obj2)
-
-    def handle_collision(self, obj1, obj2):
-        # Пули и ракеты с любыми объектами
-        if isinstance(obj1, Bullet):
-            if obj2.team != obj1.team:
-                obj2.health -= obj1.damage
-                if obj2.health <= 0:
-                    obj2.alive = False
-                obj1.alive = False
-        elif isinstance(obj2, Bullet):
-            if obj1.team != obj2.team:
-                obj1.health -= obj2.damage
-                if obj1.health <= 0:
-                    obj1.alive = False
-                obj2.alive = False
-
-        # Ракеты
-        elif isinstance(obj1, Missile):
-            if obj2.team != obj1.team:
-                obj2.health -= obj1.damage
-                if obj2.health <= 0:
-                    obj2.alive = False
-                obj1.alive = False
-        elif isinstance(obj2, Missile):
-            if obj1.team != obj2.team:
-                obj1.health -= obj2.damage
-                if obj1.health <= 0:
-                    obj1.alive = False
-                obj2.alive = False
-
-        # Столкновения кораблей с дронами
-        elif isinstance(obj1, Ship) and isinstance(obj2, Drone):
-            if obj1.team != obj2.team:
-                obj1.health -= 20
-                obj2.health -= 50
-                if obj1.health <= 0:
-                    obj1.alive = False
-                if obj2.health <= 0:
-                    obj2.alive = False
-        elif isinstance(obj2, Ship) and isinstance(obj1, Drone):
-            if obj2.team != obj1.team:
-                obj2.health -= 20
-                obj1.health -= 50
-                if obj2.health <= 0:
-                    obj2.alive = False
-                if obj1.health <= 0:
-                    obj1.alive = False
 
     def get_game_state(self):
         return {
-            'width': self.width,
-            'height': self.height,
-            'objects': {obj_id: obj.to_dict() for obj_id, obj in self.objects.items()}
+            'team': [
+                {'name': 'red', 'color': '#ff0000'},
+                {'name': 'blue', 'color': '#0000ff'}
+            ],
+            'titan': [[obj.to_dict() for obj in game.titan[0]], [obj.to_dict() for obj in game.titan[1]]],
+            'tower': [[obj.to_dict() for obj in game.tower[0]], [obj.to_dict() for obj in game.tower[1]]],
+            'drone': [[obj.to_dict() for obj in game.drone[0]], [obj.to_dict() for obj in game.drone[1]]],
+            'ship': [[obj.to_dict() for obj in game.ship[0]], [obj.to_dict() for obj in game.ship[1]]],
+            'bullet': [[obj.to_dict() for obj in game.bullet[0]], [obj.to_dict() for obj in game.bullet[1]]],
+            'missile': [[obj.to_dict() for obj in game.missile[0]], [obj.to_dict() for obj in game.missile[1]]],
+            'explosion': [obj.to_dict() for obj in game.explosion],
+            'gold': [obj.to_dict() for obj in game.gold],
+            'met': [obj.to_dict() for obj in game.met]
         }
-
-    def handle_player_input(self, player_id: str, key: str):
-        ship_id = self.players.get(player_id)
-        if not ship_id:
-            return
-
-        ship = self.objects.get(ship_id)
-        if not ship or not ship.alive:
-            return
-
-        if key == 'A':
-            ship.target_rotation += ship.rotation_speed
-        elif key == 'D':
-            ship.target_rotation -= ship.rotation_speed
-        elif key == 'SPACE':
-            if ship.shoot_cooldown <= 0:
-                ship.shoot_cooldown = 10  # 0.17 секунды при 60 FPS
-
-                # Создаем пулю
-                bullet = Bullet(
-                    self.generate_id(),
-                    ship.position + ship.direction * (ship.radius + 5),
-                    ship.direction,
-                    ship.team
-                )
-                self.objects[bullet.id] = bullet
-
 
 # ========== СЕРВЕР ==========
 
@@ -301,51 +286,71 @@ def index():
 @socketio.on('connect')
 def handle_connect():
     print(f'Client connected: {request.sid}')
+    emit('connect', {'sid': request.sid})
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    player_id = request.sid
+    sid = request.sid
+    for player in players:
+        if player.sid == sid:
+            player.destroy(players)
+    """
     if player_id in game.players:
         ship_id = game.players[player_id]
         if ship_id in game.objects:
             game.objects[ship_id].alive = False
         del game.players[player_id]
+    """
 
-    print(f'Client disconnected: {player_id}')
+    print(f'Client disconnected: {sid}')
 
 
 @socketio.on('join_team')
 def handle_join_team(data):
-    team = data.get('team', 'red')
-    player_id = request.sid
+    team_i = data.get('team')
+    sid = request.sid
 
-    # Удаляем старый корабль, если был
-    if player_id in game.players:
-        old_ship_id = game.players[player_id]
-        if old_ship_id in game.objects:
-            game.objects[old_ship_id].alive = False
+    players.append(Player(sid, team_i))
 
-    # Добавляем новый корабль
-    ship_id = game.add_ship(player_id, team)
-
-    emit('joined', {'team': team, 'ship_id': ship_id})
+    emit('joined', {'result': 'success'})
 
 
-@socketio.on('player_input')
+@socketio.on('player_keydown')
 def handle_player_input(data):
     key = data.get('key')
-    player_id = request.sid
-    game.handle_player_input(player_id, key)
+    sid = request.sid
+    #game.handle_player_input(sid, key)
+    for team in range(2):
+        for ship in game.ship[team]:
+            if sid == ship.sid:
+                ship.button[key] = True
+                return
+
+@socketio.on('player_keyup')
+def handle_player_input(data):
+    key = data.get('key')
+    sid = request.sid
+    #game.handle_player_input(sid, key)
+    for team in range(2):
+        for ship in game.ship[team]:
+            if sid == ship.sid:
+                ship.button[key] = False
+                return
 
 
 # Игровой цикл
 def game_loop():
     while True:
+
         try:
+            global game
             game.update()
             socketio.emit('game_state', game.get_game_state())
             time.sleep(1 / 60)  # 60 FPS
+            if game.restart:
+                del game
+                game = Game()
         except Exception as e:
             print(f"Error in game loop: {e}")
             time.sleep(1)
@@ -354,10 +359,13 @@ def game_loop():
 if __name__ == '__main__':
     # Запускаем игровой цикл в отдельном потоке
     import threading
-
     thread = threading.Thread(target=game_loop, daemon=True)
     thread.start()
 
-    print("Server starting on http://localhost:5000")
-    # Добавляем allow_unsafe_werkzeug=True для работы с Werkzeug
-    socketio.run(app, debug=True, port=5000, use_reloader=False, allow_unsafe_werkzeug=True)
+    print("Server starting on http://0.0.0.0:5000")
+    # Для продакшена используем 0.0.0.0 и отключаем debug
+    socketio.run(app,
+                host='0.0.0.0',
+                port=5000,
+                debug=True,
+                allow_unsafe_werkzeug=True)
