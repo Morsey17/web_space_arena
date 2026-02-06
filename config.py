@@ -4,14 +4,14 @@ class Config:
     # ship
     ship_bullet_radius = 10
     ship_health = 200
-    ship_radius = 9
+    ship_radius = 10
     ship_speed = 3
     ship_shoot_cooldown = 14
     ship_shoot_damage = 16
     ship_shoot_radius = 10
     # drone
     drone_health = 100
-    drone_radius = 5
+    drone_radius = 7
     drone_speed = 2
     drone_rotation_speed = 1
     drone_bullet_radius = 5

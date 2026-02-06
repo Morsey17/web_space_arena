@@ -1,20 +1,4 @@
-def debug_error(func):
-    """Декоратор для отладки ошибок"""
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            import traceback
-            tb = traceback.extract_tb(e.__traceback__)[-1]  # Берем последний кадр
-            print(f"Ошибка в функции {tb.name}")
-            print(f"Файл: {tb.filename}, Строка: {tb.lineno}")
-            print(f"Код: {tb.line}")
-            raise
-    return wrapper
 
-@debug_error
-def example():
-    return 1 / 0
 
 from objects.game_object import *
 

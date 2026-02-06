@@ -18,64 +18,90 @@
             display: flex;
             gap: 20px;
             margin-bottom: 20px;
+            position: relative;
+        }
+        #bgCanvas {
+            border: 2px solid #444;
+            background: #000020;
+            position: absolute;
+            left: 0;
+            top: 0;
+            z-index: 1;
         }
         #gameCanvas {
             border: 2px solid #444;
-            background: #000020;
+            position: absolute;
+            left: 0;
+            top: 0;
+            z-index: 2;
+        }
+        .canvas-wrapper {
+            position: relative;
+            width: 1000px;
+            height: 600px;
         }
     </style>
 </head>
 <body>
-    <h1>Спайс Баталия</h1>
+    <h1>Спайс Баталия (WebGL версия)</h1>
 
     <div id="gameContainer">
-        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        <div class="canvas-wrapper">
+            <canvas id="bgCanvas" width="1000" height="600"></canvas>
+            <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        </div>
     </div>
 
     <div id="controls">
         <h3>СТАТУС:</h3>
-        <div id="status">Подключение к серверу...</div>
+        <div id="status">Загрузка WebGL...</div>
     </div>
 
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/webgl-renderer.js') }}"></script>
     <script>
+        const STATIC_PATH = "{{ url_for('static', filename='') }}";
+        // Глобальные переменные
+        const canvas = document.getElementById('gameCanvas');
+        const bgCanvas = document.getElementById('bgCanvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        
+        let gameState = null;
+        let connect = false;
+        let myTeam = 0;
+        let myShipId = null;
+        window.sid = null; // делаем sid глобальным для доступа из WebGLRenderer
+        let myShip = null;
+        
+        let webglRenderer = null;
+
         // Подключение к серверу
         const socket = io();
 
-        // Элементы DOM
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const redTeamBtn = document.getElementById('redTeamBtn');
-        const blueTeamBtn = document.getElementById('blueTeamBtn');
-        const statusDiv = document.getElementById('status');
+        // Инициализация WebGL
+        async function initWebGL() {
+            try {
+                webglRenderer = new WebGLRenderer(canvas);
+                
+                // Передайте путь к текстурам
+                await webglRenderer.init(STATIC_PATH + 'textures/');
+                
+                statusDiv.textContent = 'WebGL инициализирован!';
+                return true;
+            } catch (error) {
+                console.error('WebGL failed:', error);
+                return false;
+            }
+        }
 
-        // Состояние игры
-        let gameState = {
-            width: 4000,
-            height: 4000,
-        };
-
-        let connect = false
-
-        let myTeam = 0;
-        let myShipId = null;
-        let sid = null;
-
-        let myShip = null;
-
-        let screenWidth = 600;
-        let screenHeight = 600;
-        let gameWidth = 4000;
-        let gameHeight = 4000;
-        let cameraX = 0;
-        let cameraY = 0;
-
-        // Подключение к серверу
+        // Сокет события
         socket.on('connect', (data) => {
-            if (data != null)
-                sid = data.sid;
-            console.log(sid);
-            statusDiv.textContent = 'Подключено! Выберите тиму.';
+            if (data != null) {
+                window.sid = data.sid;
+            }
+            console.log('Connected with SID:', window.sid);
+            statusDiv.textContent = 'Подключено! Выберите команду (A - красные, D - синие, ПРОБЕЛ - присоединиться).';
         });
 
         socket.on('disconnect', () => {
@@ -83,9 +109,8 @@
         });
 
         socket.on('joined', (data) => {
-            //myTeam = data.team;
             myShipId = data.ship_id;
-            statusDiv.textContent = `Подключение к команде ${data.team}! ID корабля: ${myShipId}`;
+            statusDiv.textContent = `Присоединились к команде ${data.team}! ID корабля: ${myShipId}`;
         });
 
         socket.on('game_state', (state) => {
@@ -103,17 +128,14 @@
                     socket.emit('player_keydown', { key });
                 }
 
-                if (connect == false) {
-                    if (key == 'A')
-                        myTeam = 0
-                    if (key == 'D')
-                        myTeam = 1
-                    if (key == ' ') {
-                        connect = true
+                if (!connect) {
+                    if (key === 'A') myTeam = 0;
+                    if (key === 'D') myTeam = 1;
+                    if (key === ' ') {
+                        connect = true;
                         socket.emit('join_team', { 'team': myTeam });
                     }
                 }
-
                 e.preventDefault();
             }
         });
@@ -126,607 +148,231 @@
                 } else {
                     socket.emit('player_keyup', { key });
                 }
-
                 e.preventDefault();
             }
         });
 
-        // Отправка непрерывного ввода для вращения
-        /*
-        setInterval(() => {
-            if (keys['A']) {
-                socket.emit('player_input', { key: 'A' });
-            }
-            if (keys['D']) {
-                socket.emit('player_input', { key: 'D' });
-            }
-        }, 16); // ~60 раз в секунду
-        */
+        // Функции для отрисовки на Canvas 2D (фон, интерфейс, радар)
+        function drawBackground() {
+            // Очищаем фон
+            bgCtx.fillStyle = '#050505';
+            bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
 
-        function drawRadar(x, y, tip, radius_radar, enemyTeam=0) {
-            const pif = Math.sqrt(x * x + y * y);
-            x /= pif;
-            y /= pif;
-            let alpha = 0.5;
-            let text = "T";
-            let radius = 12;
-            if (tip == "ship") {
-                text = "S";
-                radius = 9;
+            // Рисуем сетку
+            if (webglRenderer && gameState) {
+                const cameraX = webglRenderer.cameraX;
+                const cameraY = webglRenderer.cameraY;
+                
+                bgCtx.strokeStyle = 'rgb(50, 125, 50)';
+                bgCtx.lineWidth = 2;
+                const gridSize = 50;
+
+                for (let x = 0; x < bgCanvas.width; x += gridSize) {
+                    bgCtx.beginPath();
+                    bgCtx.moveTo(x - cameraX % gridSize + gridSize, 0);
+                    bgCtx.lineTo(x - cameraX % gridSize + gridSize, bgCanvas.height);
+                    bgCtx.stroke();
+                }
+
+                for (let y = 0; y < bgCanvas.height; y += gridSize) {
+                    bgCtx.beginPath();
+                    bgCtx.moveTo(0, y - cameraY % gridSize + gridSize);
+                    bgCtx.lineTo(bgCanvas.width, y - cameraY % gridSize + gridSize);
+                    bgCtx.stroke();
+                }
+
+                // Рисуем радар и интерфейс (старый код)
+                drawRadarAndUI();
             }
-            else if (tip == "drone") {
-                text = "D";
-                radius = 6;
-            }
-            else if (tip == "met") {
-                text = "M";
-                radius = 10;
-            }
-            if (pif < radius_radar + 5) alpha = 0.0;
-            else if (pif < radius_radar * 5) alpha = (1 - (pif - radius_radar) / (radius_radar * 4)) * 0.5 + 0.5;
-            if (text != "M")
-                color = hexToRgba(gameState.team[enemyTeam].color, alpha);
-            else
-                color = hexToRgba('#ffff00', alpha);
-            ctx.beginPath();
-            ctx.fillStyle = color;
-            ctx.arc(300 - x * radius_radar, 300 - y * radius_radar, radius, 0, 2 * Math.PI);
-            ctx.lineWidth = 3;
-            ctx.fill();
-            ctx.font = "13px arial bold";
-            ctx.fillStyle = 'black';
-            ctx.fillText(text, 300 - x * radius_radar - 4, 300 - y * radius_radar + 3);
         }
 
-        function normValue(value, size=4000) {
+        function drawRadarAndUI() {
+            if (!gameState || !myShip) return;
+
+            // Рисуем радар
+            const radius_radar = 280;
+            bgCtx.beginPath();
+            bgCtx.strokeStyle = 'rgb(50, 125, 50)';
+            bgCtx.arc(300, 300, radius_radar, 0, 2 * Math.PI);
+            bgCtx.lineWidth = 1;
+            bgCtx.stroke();
+
+            // Рисуем объекты на радаре
+            for (const obj of gameState.met) {
+                drawRadar(normValue(webglRenderer.cameraX - obj.x), normValue(webglRenderer.cameraY - obj.y), "met", radius_radar);
+            }
+
+            for (let team_i = 0; team_i < 2; team_i++) {
+                for (const obj of gameState.drone[team_i]) {
+                    drawRadar(normValue(webglRenderer.cameraX - obj.x), normValue(webglRenderer.cameraY - obj.y), "drone", radius_radar, team_i);
+                }
+
+                for (const obj of gameState.ship[team_i]) {
+                    drawRadar(normValue(webglRenderer.cameraX - obj.x), normValue(webglRenderer.cameraY - obj.y), "ship", radius_radar, team_i);
+                }
+
+                for (const obj of gameState.titan[team_i]) {
+                    drawRadar(normValue(webglRenderer.cameraX - obj.x), normValue(webglRenderer.cameraY - obj.y), "titan", radius_radar, team_i);
+                }
+            }
+            
+            // Рисуем правую панель
+            bgCtx.fillStyle = '#000000';
+            bgCtx.fillRect(600, 0, 400, 600);
+
+            /*
+
+            // Интерфейс игрока
+            if (myShip) {
+                const enemyTeam = myTeam === 0 ? 1 : 0;
+                
+                bgCtx.fillStyle = gameState.team[myTeam].color;
+                bgCtx.font = "30px serif";
+                bgCtx.fillText("ТВОИ ХЭПАСЫ", 680, 40);
+                
+                // Полоска здоровья
+                bgCtx.fillStyle = 'white';
+                bgCtx.fillRect(640, 70, 320, 50);
+                bgCtx.fillStyle = 'black';
+                bgCtx.fillRect(644, 74, 312, 42);
+                bgCtx.fillStyle = gameState.team[myTeam].color;
+                bgCtx.fillRect(800 - 150 * myShip.health, 80, 300 * myShip.health, 30);
+
+                if (myShip.admin) {
+                    bgCtx.fillText("Я ГЕЙ", 680, 400);
+                }
+            }
+
+            // Полоски здоровья титанов
+            for (let i = 0; i < 2; i++) {
+                const obj = gameState.titan[i][0];
+                const y = 180 + i * 120;
+                bgCtx.fillStyle = gameState.team[i].color;
+                bgCtx.font = "30px serif";
+                bgCtx.fillText("ТИТАН", 715, y - 20);
+                bgCtx.fillStyle = 'white';
+                bgCtx.fillRect(640, y, 320, 50);
+                bgCtx.fillStyle = 'black';
+                bgCtx.fillRect(644, y + 4, 312, 42);
+                if (obj.health > 0) {
+                    bgCtx.fillStyle = gameState.team[i].color;
+                    bgCtx.fillRect(800 - 150 * obj.health, y + 10, 300 * obj.health, 30);
+                }
+            }
+
+            // Выбор команды
+            if (!connect) {
+                bgCtx.fillStyle = 'white';
+                bgCtx.fillRect(90 + myTeam * 250, 215, 170, 170);
+                bgCtx.fillStyle = gameState.team[0].color;
+                bgCtx.fillRect(100, 225, 150, 150);
+                bgCtx.fillStyle = gameState.team[1].color;
+                bgCtx.fillRect(350, 225, 150, 150);
+            }*/
+        }
+
+        // Вспомогательные функции
+        function normValue(value, size = 4000) {
             value = value % size;
             if (value < -size / 2) value += size;
             else if (value > size / 2) value -= size;
             return value;
         }
 
+        function hexToRgba(hex, alpha) {
+            hex = hex.replace('#', '');
+            if (hex.length === 3) {
+                hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+            }
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
 
-        // Отрисовка игры
+        function drawRadar(x, y, tip, radius_radar, enemyTeam = 0) {
+            const pif = Math.sqrt(x * x + y * y);
+            x /= pif;
+            y /= pif;
+            let alpha = 0.5;
+            let text = "T";
+            let radius = 12;
+            
+            if (tip === "ship") {
+                text = "S";
+                radius = 9;
+            } else if (tip === "drone") {
+                text = "D";
+                radius = 6;
+            } else if (tip === "met") {
+                text = "M";
+                radius = 10;
+            }
+            
+            if (pif < radius_radar + 5) alpha = 0.0;
+            else if (pif < radius_radar * 5) alpha = (1 - (pif - radius_radar) / (radius_radar * 4)) * 0.5 + 0.5;
+            
+            let color;
+            if (text !== "M")
+                color = hexToRgba(gameState.team[enemyTeam].color, alpha);
+            else
+                color = hexToRgba('#ffff00', alpha);
+            
+            bgCtx.beginPath();
+            bgCtx.fillStyle = color;
+            bgCtx.arc(300 - x * radius_radar, 300 - y * radius_radar, radius, 0, 2 * Math.PI);
+            bgCtx.lineWidth = 3;
+            bgCtx.fill();
+            bgCtx.font = "13px arial bold";
+            bgCtx.fillStyle = 'black';
+            bgCtx.fillText(text, 300 - x * radius_radar - 4, 300 - y * radius_radar + 3);
+        }
+
+        // Основная функция отрисовки
         function drawGame() {
-
-            for (let team_i in gameState.titan)
-                for (const i in gameState.ship[team_i]) {
-                    obj = gameState.ship[team_i][i]
-                    if (sid == obj.sid)
-                    {
-                        myShip = obj
-                        cameraX = obj.x;
-                        cameraY = obj.y;
-                        myTeam = team_i
+            if (!gameState) return;
+        
+            // Находим наш корабль
+            myShip = null;
+            for (let team_i in gameState.ship) {
+                for (const ship of gameState.ship[team_i]) {
+                    if (window.sid === ship.sid) {
+                        myShip = ship;
+                        myTeam = parseInt(team_i);
                         break;
                     }
                 }
-
-
-            // Рисуем объекты
-
-
-            // Очищаем холст
-            ctx.fillStyle = '#050505';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Рисуем сетку
-            ctx.strokeStyle = 'rgb(50, 125, 50)';
-            ctx.lineWidth = 2;
-            const gridSize = 50;
-
-            for (let x = 0; x < canvas.width; x += gridSize) {
-                ctx.beginPath();
-                ctx.moveTo(x - cameraX % gridSize + gridSize, 0);
-                ctx.lineTo(x - cameraX % gridSize + gridSize, canvas.height);
-                ctx.stroke();
+                if (myShip) break;
             }
-
-            for (let y = 0; y < canvas.height; y += gridSize) {
-                ctx.beginPath();
-                ctx.moveTo(0, y - cameraY % gridSize + gridSize);
-                ctx.lineTo(canvas.width, y - cameraY % gridSize + gridSize);
-                ctx.stroke();
-            }
-
-
-            for (const i in gameState.met) {
-                obj = gameState.met[i]
-                drawMet(obj);
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.titan[team_i]) {
-                    obj = gameState.titan[team_i][i]
-                    drawTitan(obj, color);
-                }
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.tower[team_i]) {
-                    obj = gameState.tower[team_i][i]
-                    drawTower(obj, color);
-                }
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.ship[team_i]) {
-                    obj = gameState.ship[team_i][i]
-                    drawShip(obj, color);
-                }
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.drone[team_i]) {
-                    obj = gameState.drone[team_i][i]
-                    drawDrone(obj, color);
-                }
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.bullet[team_i]) {
-                    obj = gameState.bullet[team_i][i]
-                    drawBullet(obj, color);
-                }
-            }
-            for (let team_i in gameState.titan)
-            {
-                color = gameState.team[team_i].color;
-                for (const i in gameState.missile[team_i]) {
-                    obj = gameState.missile[team_i][i]
-                    drawBullet(obj, color);
-                }
-            }
-
-            for (const i in gameState.explosion) {
-                obj = gameState.explosion[i]
-                drawExplosion(obj);
-            }
-
-            for (const i in gameState.gold) {
-                obj = gameState.gold[i]
-                drawGold(obj);
-            }
-
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(600, 0, 400, 600)
-
-            const radius_radar = 280;
-            ctx.beginPath();
-            ctx.strokeStyle = 'rgb(50, 125, 50)';
-            ctx.arc(300, 300, radius_radar, 0, 2 * Math.PI);
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-
-            for (const i in gameState.met) {
-                obj = gameState.met[i]
-                drawRadar(normValue(cameraX - obj.x), normValue(cameraY - obj.y), "met", radius_radar)
-            }
-
-            for (let team_i in gameState.titan) {
-                for (const i in gameState.drone[team_i]) {
-                    obj = gameState.drone[team_i][i]
-                    drawRadar(normValue(cameraX - obj.x), normValue(cameraY - obj.y), "drone", radius_radar,   team_i)
-                }
-    
-                for (const i in gameState.ship[team_i]) {
-                    obj = gameState.ship[team_i][i]
-                    drawRadar(normValue(cameraX - obj.x), normValue(cameraY - obj.y), "ship", radius_radar,    team_i)
-                }
-
-                for (const i in gameState.titan[team_i]) {
-                    obj = gameState.titan[team_i][i]
-                    drawRadar(normValue(cameraX - obj.x), normValue(cameraY - obj.y), "titan", radius_radar,   team_i)
-                }
-            }
-
-            if (myShip != null) {
-                let enemyTeam = 0;
-                if (myTeam == 0) enemyTeam = 1;
-
-
-                ctx.fillStyle = gameState.team[myTeam].color;
-                ctx.font = "30px serif";
-                ctx.fillText("ТВОИ ХЭПАСЫ", 680, 40)
-                ctx.fillStyle = 'white';
-                ctx.fillRect(640, 70, 320, 50)
-                ctx.fillStyle = 'black';
-                ctx.fillRect(644, 74, 312, 42)
-                ctx.fillStyle = gameState.team[myTeam].color;
-                ctx.fillRect(800 - 150 * myShip.health, 80, 300 * myShip.health, 30)
-
-                if (myShip.admin)
-                    ctx.fillText("Я ГЕЙ", 680, 400)
-            }
-
-            for (let i = 0; i < 2; i ++) {
-                const obj = gameState.titan[i][0]
-                const y = 180 + i * 120
-                ctx.fillStyle = gameState.team[i].color;
-                ctx.font = "30px serif";
-                ctx.fillText("ТИТАН", 715, y - 20)
-                ctx.fillStyle = 'white';
-                ctx.fillRect(640, y, 320, 50)
-                ctx.fillStyle = 'black';
-                ctx.fillRect(644, y + 4, 312, 42)
-                if (obj.health > 0)
-                {
-                    ctx.fillStyle = gameState.team[i].color;
-                    ctx.fillRect(800 - 150 * obj.health, y + 10, 300 * obj.health, 30)
-                }
-            }
-
-            if (connect == false) {
-                ctx.fillStyle = 'white';
-                ctx.fillRect(90 + myTeam * 250, 215, 170, 170)
-                ctx.fillStyle = gameState.team[0].color;
-                ctx.fillRect(100, 225, 150, 150)
-                ctx.fillStyle = gameState.team[1].color;
-                ctx.fillRect(350, 225, 150, 150)
-            }
-
-        }
-
-
-function hexToRgba(hex, alpha) {
-    // Убираем #
-    hex = hex.replace('#', '');
-    
-    // Преобразуем короткий формат в полный
-    if (hex.length === 3) {
-        hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-    }
-    
-    // Парсим компоненты
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
-    
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-// Использование:
-ctx.fillStyle = hexToRgba('#ff0000', 0.5);
-
-
-function normPostition(x, y) {
-    x = x - cameraX + screenWidth / 2;
-    y = y - cameraY + screenHeight / 2;
-    if (x > gameWidth / 2) x -= gameWidth
-    else if (x < -gameWidth / 2) x += gameWidth
-    if (y > gameHeight / 2) y -= gameHeight
-    else if (y < -gameHeight / 2) y += gameHeight
-    return [x, y];
-}
-
-
-        function drawMet(obj) {
-
-            let { x, y, radius, value, max_value } = obj;
         
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            // Внутренний круг
-            ctx.fillStyle = '#aaaa00';
-            ctx.strokeStyle = '#aaaa00';
-            ctx.beginPath();
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(x, y, (radius - 10) * value / max_value, 0, Math.PI * 2);
-            console.log(value, max_value);
-            ctx.fill();
-        }
-
-
-function drawTitan(obj, color) {
-    let { x, y, radius, health, spawn_drone_progress } = obj;
-
-    const get_pos = normPostition(x, y)
-    x = get_pos[0]
-    y = get_pos[1]
-
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    color_fon = 'black'
-
-    const baseRadius = radius * 0.35
-    const delitNa = 7
-    let max = Math.round(health * 5 + 0.4999) - 1
-    ctx.fillStyle = color_fon;
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 4 / delitNa + baseRadius + 2, 0, Math.PI * 2);
-    ctx.fill();
-    if (health > 0)
-    {
-        let alpha = health * 5 - Math.round(health * 5 + 0.4999) + 1
-        ctx.fillStyle = hexToRgba(color, alpha);
-        ctx.beginPath();
-        ctx.arc(x, y, radius * (max) / delitNa + baseRadius, 0, Math.PI * 2);
-        ctx.fill();
-        for (let i = 0; i < Math.round(health * 5 + 0.4999) - 1; i++) {
-            let max = Math.round(health * 5 + 0.4999) - 2
-            ctx.fillStyle = color_fon;
-            ctx.beginPath();
-            ctx.arc(x, y, radius * (max - i) / delitNa + baseRadius + 2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, radius * (max - i) / delitNa + baseRadius, 0, Math.PI * 2);
-            ctx.fill();
-        }
-    }
-}
-
-        // Вспомогательная функция для плавного изменения цвета
-        function interpolateColor(baseColor, factor) {
-            // baseColor в формате '#RRGGBB', factor от 0 до ~2
-            // 0.5 - темный, 1 - нормальный, 1.5 - яркий
-            const hex = baseColor.replace('#', '');
-            const r = parseInt(hex.substr(0, 2), 16);
-            const g = parseInt(hex.substr(2, 2), 16);
-            const b = parseInt(hex.substr(4, 2), 16);
-            
-            const adjust = (channel) => {
-                let value = Math.floor(channel * factor);
-                value = Math.max(0, Math.min(255, value));
-                return value.toString(16).padStart(2, '0');
-            };
-            
-            return `#${adjust(r)}${adjust(g)}${adjust(b)}`;
-        }
-
-
-
-        function drawMotionTrail(obj) {
-            const { x, y, direction_x, direction_y, radius } = obj;
-            const pos = normPostition(x, y);
-            
-            // Создаем частицы позади корабля
-            random = -Math.random() * 20;
-            for (let i = 0; i < 3; i++) {
-                const offset = -radius * (1 + i * 0.5) + random;
-                const px = pos[0] + direction_x * offset;
-                const py = pos[1] + direction_y * offset;
-                
-                ctx.beginPath();
-                ctx.fillStyle = `rgba(255, ${200 - i * 50}, 0, ${0.7 - i * 0.2})`;
-                ctx.arc(px, py, radius * (0.3 - i * 0.08), 0, Math.PI * 2);
-                ctx.fill();
+            // Рисуем фон на Canvas 2D
+            drawBackground();
+        
+            // Рисуем игровые объекты через WebGL, только если готов
+            if (webglRenderer && webglRenderer.isReady) {
+                webglRenderer.renderGameState(gameState);
+            } else {
+                console.log('⏳ WebGL еще не готов, используем Canvas для объектов...');
+                // Можете добавить Canvas fallback здесь
             }
         }
 
-        function drawShip(obj, color) {
-
-            let { x, y, radius, health, gold } = obj;
-
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            drawMotionTrail(obj)
-
-            ctx.save();
-            ctx.translate(x, y);
-
-            // Поворот в направлении движения
-            const angle = Math.atan2(obj.direction_y, obj.direction_x);
-            ctx.rotate(angle);
-
-            // Рисуем корабль
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.moveTo(radius, 0);
-            ctx.lineTo(-radius * 0.7, radius * 0.7);
-            ctx.lineTo(-radius * 0.5, 0);
-            ctx.lineTo(-radius * 0.7, -radius * 0.7);
-            ctx.closePath();
-            ctx.fill();
-
-            // Контур
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            ctx.restore();
-
-
-            ctx.beginPath();
-            ctx.strokeStyle = '#fff00f';
-            ctx.arc(x, y, radius * 2 + Math.sqrt(gold) / 2, 0, Math.PI * 2);
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.strokeStyle = hexToRgba(color, health);
-            ctx.arc(x, y, radius * 1.6, 0, Math.PI * 2);
-            ctx.lineWidth = 2.5;
-            ctx.stroke();
-        }
-
-        function drawDrone(obj, color) {
-
-            let { x, y, radius, health } = obj;
+        // Инициализация
+        async function init() {
+            const webglSuccess = await initWebGL();
+            if (!webglSuccess) {
+                statusDiv.textContent = 'Ошибка инициализации WebGL. Используется Canvas.';
+                return;
+            }
             
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            // Маленький круг
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Контур
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // Направление
-            const angle = Math.atan2(obj.direction_y, obj.direction_x);
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(
-                x + Math.cos(angle) * radius * 1.5,
-                y + Math.sin(angle) * radius * 1.5
-            );
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.strokeStyle = hexToRgba(color, health);
-            ctx.arc(x, y, radius * 1.6, 0, Math.PI * 2);
-            ctx.lineWidth = 2.5;
-            ctx.stroke();
+            // Ждем немного, чтобы убедиться что WebGL готов
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            statusDiv.textContent = 'WebGL готов! Ожидание подключения к серверу...';
         }
 
-        function drawTower(obj, color) {
-
-            let { x, y, radius, health } = obj;
-        
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            // Внутренний круг
-
-
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
-            // Детали;
-            ctx.fillStyle = 'black';
-            ctx.beginPath();
-            ctx.arc(x, y, radius * 0.6, 0, Math.PI * 2);
-            ctx.fill();
-            // Health circle
-            colorHealth = hexToRgba(color, obj.health);
-            ctx.fillStyle = colorHealth;
-            ctx.beginPath();
-            ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        function drawBullet(obj, color) {
-
-            let { x, y, radius, speed, direction_x, direction_y } = obj;
-
-            radius /= 2;
-        
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-            // Маленький круг
-            for (let i = 0; i < 3; i ++) {
-                col = hexToRgba(color, (1 - i / 3))
-                ctx.fillStyle = col;
-                ctx.beginPath();
-                ctx.arc(x - direction_x * i * speed / 3, y - direction_y * i * speed / 3, radius, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-            // Свечение
-            ctx.fillStyle = 'white';
-            ctx.beginPath();
-            ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        function drawMissile(obj, color) {
-
-            let { x, y, radius } = obj;
-        
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-            // Ракета
-            ctx.save();
-            ctx.translate(x, y);
-
-            const angle = Math.atan2(obj.direction_y, obj.direction_x);
-            ctx.rotate(angle);
-
-            // Тело
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.moveTo(radius * 1.5, 0);
-            ctx.lineTo(-radius, radius);
-            ctx.lineTo(-radius, -radius);
-            ctx.closePath();
-            ctx.fill();
-
-            // Огонь из двигателя
-            const fireLength = 5;
-            ctx.fillStyle = '#ff6600';
-            ctx.beginPath();
-            ctx.moveTo(-radius, 0);
-            ctx.lineTo(-radius - fireLength, radius * 0.5);
-            ctx.lineTo(-radius - fireLength * 0.7, 0);
-            ctx.lineTo(-radius - fireLength, -radius * 0.5);
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.restore();
-        }
-
-        function drawExplosion(obj) {
-
-            let { x, y, radius, lifetime, team } = obj;
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            color = hexToRgba('#ffffff', lifetime);
-
-            ctx.beginPath();
-            ctx.fillStyle = hexToRgba(gameState.team[team].color, lifetime);
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = hexToRgba('#000000', lifetime / 2);
-            ctx.fill();
-
-        }
-
-        function drawGold(obj) {
-
-            let { x, y, value } = obj;
-            const get_pos = normPostition(x, y)
-            x = get_pos[0]
-            y = get_pos[1]
-
-            color = '#ffff00';
-            radius = Math.sqrt(value);
-
-            ctx.beginPath();
-            ctx.fillStyle = color;
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
-
-        }
-
-        // Информация об игре
-        setInterval(() => {
-            if (myShipId && gameState.objects[myShipId]) {
-                const ship = gameState.objects[myShipId];
-                statusDiv.textContent =
-                    `${myTeam.toUpperCase()} Team | Health: ${Math.max(0, ship.health)}/${ship.max_health} | ` +
-                    `Objects: ${Object.keys(gameState.objects).length}`;
-            }
-        }, 1000);
+        // Старт
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>

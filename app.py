@@ -1,5 +1,5 @@
 # scp flask-game.tar root@92.118.114.86:/tmp/
-# w5LLhwVCQAb7S-
+# 1w5LLhwVCQAb7S23-
 
 # s2
 
@@ -11,16 +11,34 @@ sudo docker run -d \
   --restart always \
   flask-game
 
-
+openssl x509 -in /root/tss-server/ssl/cert.pem -noout -dates
         подключение к серверу:
 ssh root@92.118.114.86
 cd \tmp
 
 """
 
+def debug_error(func):
+    """Декоратор для отладки ошибок"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            import traceback
+            tb = traceback.extract_tb(e.__traceback__)[-1]  # Берем последний кадр
+            print(f"Ошибка в функции {tb.name}")
+            print(f"Файл: {tb.filename}, Строка: {tb.lineno}")
+            print(f"Код: {tb.line}")
+            raise
+    return wrapper
+
+@debug_error
+def example():
+    return 1 / 0
 
 
-from flask import Flask, render_template, request
+
+from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 import math
 import random
@@ -29,6 +47,12 @@ from typing import List, Optional, Tuple
 import time
 
 app = Flask(__name__)
+app.config['STATIC_FOLDER'] = 'static'
+
+# Для отдачи статических файлов (если нужно)
+@app.route('/static/<path:path>')
+def send_static(path):
+    return send_from_directory('static', path)
 
 
 class Player:
@@ -312,6 +336,7 @@ def handle_join_team(data):
     sid = request.sid
 
     players.append(Player(sid, team_i))
+    game.add_ship(team_i, sid)
 
     emit('joined', {'result': 'success'})
 
@@ -359,13 +384,29 @@ def game_loop():
 if __name__ == '__main__':
     # Запускаем игровой цикл в отдельном потоке
     import threading
+
     thread = threading.Thread(target=game_loop, daemon=True)
     thread.start()
 
-    print("Server starting on http://0.0.0.0:5000")
-    # Для продакшена используем 0.0.0.0 и отключаем debug
+    print("Server starting on https://0.0.0.0:5000")
+
+    # Пути к SSL сертификатам
+    ssl_cert = '/app/ssl/cert.pem'
+    ssl_key = '/app/ssl/key.pem'
+
+    # Проверяем наличие сертификатов
+    import os
+
+    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        ssl_context = (ssl_cert, ssl_key)
+    else:
+        ssl_context = None
+        print("SSL сертификаты не найдены, запуск без HTTPS")
+
+    # Запускаем с SSL
     socketio.run(app,
-                host='0.0.0.0',
-                port=5000,
-                debug=True,
-                allow_unsafe_werkzeug=True)
+                 host='0.0.0.0',
+                 port=5000,
+                 debug=True,
+                 allow_unsafe_werkzeug=True,
+                 ssl_context=ssl_context)
