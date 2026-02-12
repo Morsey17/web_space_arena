@@ -18,7 +18,7 @@ RUN mkdir -p /app/ssl
 COPY ssl/ /app/ssl/
 
 # Проверка (для отладки)
-RUN ls -la /app/ssl/ && echo "SSL файлы должны быть здесь"
+#RUN ls -la /app/ssl/ && echo "SSL файлы должны быть здесь"
 
 # Открываем порт 5000
 EXPOSE 5000
