@@ -10,5 +10,6 @@ __pycache__/
 *.sqlite3
 *.log
 *.tar
+*.help
 *.gz
 .DS_Store
