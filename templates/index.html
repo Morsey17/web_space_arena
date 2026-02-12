@@ -66,14 +66,14 @@
         const bgCanvas = document.getElementById('bgCanvas');
         const bgCtx = bgCanvas.getContext('2d');
         const statusDiv = document.getElementById('status');
-        
+
         let gameState = null;
         let connect = false;
         let myTeam = 0;
         let myShipId = null;
         window.sid = null; // делаем sid глобальным для доступа из WebGLRenderer
         let myShip = null;
-        
+
         let webglRenderer = null;
 
         // Подключение к серверу
@@ -83,10 +83,10 @@
         async function initWebGL() {
             try {
                 webglRenderer = new WebGLRenderer(canvas);
-                
+
                 // Передайте путь к текстурам
                 await webglRenderer.init(STATIC_PATH + 'textures/');
-                
+
                 statusDiv.textContent = 'WebGL инициализирован!';
                 return true;
             } catch (error) {
@@ -162,7 +162,7 @@
             if (webglRenderer && gameState) {
                 const cameraX = webglRenderer.cameraX;
                 const cameraY = webglRenderer.cameraY;
-                
+
                 bgCtx.strokeStyle = 'rgb(50, 125, 50)';
                 bgCtx.lineWidth = 2;
                 const gridSize = 50;
@@ -215,7 +215,7 @@
                     drawRadar(normValue(webglRenderer.cameraX - obj.x), normValue(webglRenderer.cameraY - obj.y), "titan", radius_radar, team_i);
                 }
             }
-            
+
             // Рисуем правую панель
             bgCtx.fillStyle = '#000000';
             bgCtx.fillRect(600, 0, 400, 600);
@@ -225,11 +225,11 @@
             // Интерфейс игрока
             if (myShip) {
                 const enemyTeam = myTeam === 0 ? 1 : 0;
-                
+
                 bgCtx.fillStyle = gameState.team[myTeam].color;
                 bgCtx.font = "30px serif";
                 bgCtx.fillText("ТВОИ ХЭПАСЫ", 680, 40);
-                
+
                 // Полоска здоровья
                 bgCtx.fillStyle = 'white';
                 bgCtx.fillRect(640, 70, 320, 50);
@@ -297,7 +297,7 @@
             let alpha = 0.5;
             let text = "T";
             let radius = 12;
-            
+
             if (tip === "ship") {
                 text = "S";
                 radius = 9;
@@ -308,16 +308,16 @@
                 text = "M";
                 radius = 10;
             }
-            
+
             if (pif < radius_radar + 5) alpha = 0.0;
             else if (pif < radius_radar * 5) alpha = (1 - (pif - radius_radar) / (radius_radar * 4)) * 0.5 + 0.5;
-            
+
             let color;
             if (text !== "M")
                 color = hexToRgba(gameState.team[enemyTeam].color, alpha);
             else
                 color = hexToRgba('#ffff00', alpha);
-            
+
             bgCtx.beginPath();
             bgCtx.fillStyle = color;
             bgCtx.arc(300 - x * radius_radar, 300 - y * radius_radar, radius, 0, 2 * Math.PI);
@@ -331,7 +331,7 @@
         // Основная функция отрисовки
         function drawGame() {
             if (!gameState) return;
-        
+
             // Находим наш корабль
             myShip = null;
             for (let team_i in gameState.ship) {
@@ -344,10 +344,10 @@
                 }
                 if (myShip) break;
             }
-        
+
             // Рисуем фон на Canvas 2D
             drawBackground();
-        
+
             // Рисуем игровые объекты через WebGL, только если готов
             if (webglRenderer && webglRenderer.isReady) {
                 webglRenderer.renderGameState(gameState);
@@ -364,10 +364,10 @@
                 statusDiv.textContent = 'Ошибка инициализации WebGL. Используется Canvas.';
                 return;
             }
-            
+
             // Ждем немного, чтобы убедиться что WebGL готов
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             statusDiv.textContent = 'WebGL готов! Ожидание подключения к серверу...';
         }
 

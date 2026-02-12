@@ -381,6 +381,42 @@ def game_loop():
             time.sleep(1)
 
 
+@app.route('/api/health')
+def health():
+    import os
+    ssl_enabled = os.path.exists('/app/ssl/cert.pem')
+    return {
+        'status': 'ok',
+        'ssl': ssl_enabled,
+        'timestamp': time.time()
+    }
+
+
+# ========== HTTPS НАСТРОЙКА ==========
+import os
+import ssl
+
+
+def create_ssl_context():
+    """Создание SSL контекста для HTTPS"""
+    ssl_cert = '/app/ssl/cert.pem'
+    ssl_key = '/app/ssl/key.pem'
+
+    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        print(f"✅ SSL сертификаты найдены: {ssl_cert}, {ssl_key}")
+        # Создаем SSL контекст
+        context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+        context.load_cert_chain(ssl_cert, ssl_key)
+        return context
+    else:
+        print(f"⚠️ SSL сертификаты не найдены по пути: {ssl_cert}, {ssl_key}")
+        print("⚠️ Запуск без HTTPS")
+        return None
+
+
+# Создаем SSL контекст ДО запуска
+ssl_context = create_ssl_context()
+
 if __name__ == '__main__':
     # Запускаем игровой цикл в отдельном потоке
     import threading
@@ -388,25 +424,16 @@ if __name__ == '__main__':
     thread = threading.Thread(target=game_loop, daemon=True)
     thread.start()
 
-    print("Server starting on https://0.0.0.0:5000")
+    # Определяем протокол для логов
+    protocol = "https" if ssl_context else "http"
+    print(f"🚀 Сервер запускается на {protocol}://0.0.0.0:5000")
 
-    # Пути к SSL сертификатам
-    ssl_cert = '/app/ssl/cert.pem'
-    ssl_key = '/app/ssl/key.pem'
-
-    # Проверяем наличие сертификатов
-    import os
-
-    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
-        ssl_context = (ssl_cert, ssl_key)
-    else:
-        ssl_context = None
-        print("SSL сертификаты не найдены, запуск без HTTPS")
-
-    # Запускаем с SSL
-    socketio.run(app,
-                 host='0.0.0.0',
-                 port=5000,
-                 debug=True,
-                 allow_unsafe_werkzeug=True,
-                 ssl_context=ssl_context)
+    # Запускаем сервер
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=5000,
+        debug=False,  # В продакшене лучше отключить debug
+        allow_unsafe_werkzeug=True,
+        ssl_context=ssl_context
+    )
