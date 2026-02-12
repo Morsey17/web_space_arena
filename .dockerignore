@@ -10,5 +10,7 @@ __pycache__/
 *.sqlite3
 *.log
 *.tar
+*.help
+*.idea
 *.gz
 .DS_Store

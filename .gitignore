@@ -11,5 +11,6 @@ __pycache__/
 *.log
 *.tar
 *.help
+*.idea
 *.gz
 .DS_Store
