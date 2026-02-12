@@ -1,23 +1,3 @@
-# scp flask-game.tar root@92.118.114.86:/tmp/
-# 1w5LLhwVCQAb7S23-
-
-# s2
-
-"""
-
-sudo docker run -d \
-  --name flask-game \
-  -p 8080:5000 \
-  --restart always \
-  flask-game
-
-openssl x509 -in /root/tss-server/ssl/cert.pem -noout -dates
-        подключение к серверу:
-ssh root@92.118.114.86
-cd \tmp
-
-"""
-
 def debug_error(func):
     """Декоратор для отладки ошибок"""
     def wrapper(*args, **kwargs):
